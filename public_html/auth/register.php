@@ -770,15 +770,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                 <div class="role-desc">Create courses and share your knowledge</div>
                             </label>
                             
-                            <label class="role-card" id="adminCard">
-                                <input type="radio" name="role" value="admin" class="role-radio"
-                                       <?php echo (isset($_POST['role']) && $_POST['role'] == 'admin') ? 'checked' : ''; ?>>
-                                <div class="role-icon">
-                                    <i class="fas fa-user-shield"></i>
-                                </div>
-                                <div class="role-title">Admin</div>
-                                <div class="role-desc">Manage the platform and users</div>
-                            </label>
                         </div>
                     </div>
                     
