@@ -1,104 +1,163 @@
 <?php
-// forum/topic.php
+// Simplified topic.php with error reporting
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Include header
 require_once '../includes/header.php';
 
 // Get topic ID from URL
 $topic_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
-// In a real application, you would fetch the topic from database
-// For demonstration, we'll use sample data
-$topic = [
-    'id' => $topic_id,
-    'title' => 'Sample Topic Title',
-    'content' => 'This is the content of the sample topic. It would normally be loaded from a database.',
-    'author' => 'User123',
-    'created_at' => '2025-02-20 15:30:45',
-    'forum_id' => 1
-];
+// Get initial data about the topic for breadcrumbs
+$topic_title = 'Topic Not Found';
+$category_name = 'Forums';
+$category_id = 0;
 
-// Sample replies
-$replies = [
-    [
-        'id' => 1,
-        'content' => 'This is a reply to the topic. Great discussion!',
-        'author' => 'User456',
-        'created_at' => '2025-02-20 16:15:22'
-    ],
-    [
-        'id' => 2,
-        'content' => 'I have a question about this topic...',
-        'author' => 'User789',
-        'created_at' => '2025-02-21 09:45:10'
-    ]
-];
+// Try to get topic data
+if (isset($conn) && $topic_id > 0) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT t.topic_id, t.title, t.content, t.created_at, t.user_id, 
+                   c.category_id, c.category_name, 
+                   u.username
+            FROM forum_topics t
+            LEFT JOIN forum_categories c ON t.category_id = c.category_id
+            LEFT JOIN users u ON t.user_id = u.user_id
+            WHERE t.topic_id = ?
+        ");
+        
+        if ($stmt) {
+            $stmt->bind_param("i", $topic_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            if ($result && $result->num_rows > 0) {
+                $topic = $result->fetch_assoc();
+                $topic_title = $topic['title'];
+                $category_name = $topic['category_name'];
+                $category_id = $topic['category_id'];
+            }
+        }
+    } catch (Exception $e) {
+        echo '<div class="container my-4 alert alert-danger">Error: ' . $e->getMessage() . '</div>';
+    }
+}
 ?>
 
 <div class="container my-4">
+    <!-- Breadcrumb -->
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="index.php">Forums</a></li>
-            <li class="breadcrumb-item active" aria-current="page"><?php echo htmlspecialchars($topic['title']); ?></li>
+            <li class="breadcrumb-item">
+                <a href="index.php"><?php echo htmlspecialchars($category_name); ?></a>
+            </li>
+            <li class="breadcrumb-item active" aria-current="page">
+                <?php echo htmlspecialchars($topic_title); ?>
+            </li>
         </ol>
     </nav>
     
-    <div class="card mb-4">
-        <div class="card-header bg-light d-flex justify-content-between align-items-center">
-            <h2 class="mb-0 fs-4"><?php echo htmlspecialchars($topic['title']); ?></h2>
-            <small>Posted by <?php echo htmlspecialchars($topic['author']); ?> on <?php echo date('F j, Y, g:i a', strtotime($topic['created_at'])); ?></small>
+    <?php if (!$topic_id || empty($topic)): ?>
+        <div class="alert alert-warning">
+            Topic not found. <a href="index.php">Return to forums</a>
         </div>
-        <div class="card-body">
-            <div class="topic-content mb-3">
-                <?php echo nl2br(htmlspecialchars($topic['content'])); ?>
+    <?php else: ?>
+        <!-- Topic header -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h1 class="h3 mb-0"><?php echo htmlspecialchars($topic['title']); ?></h1>
+                <small>
+                    Posted by <?php echo htmlspecialchars($topic['username']); ?> 
+                    on <?php echo date('F j, Y, g:i a', strtotime($topic['created_at'])); ?>
+                </small>
             </div>
             
-            <!-- Display attachments if any -->
-            <div class="attachments mb-3">
-                <!-- In a real app, you would display attachments here -->
+            <div class="card-body">
+                <div class="topic-content">
+                    <?php echo nl2br(htmlspecialchars($topic['content'])); ?>
+                </div>
             </div>
         </div>
-    </div>
-    
-    <h3>Replies</h3>
-    
-    <?php if (empty($replies)): ?>
-        <div class="alert alert-info">No replies yet. Be the first to reply!</div>
-    <?php else: ?>
-        <?php foreach ($replies as $reply): ?>
-            <div class="card mb-3">
-                <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                    <span><?php echo htmlspecialchars($reply['author']); ?></span>
-                    <small><?php echo date('F j, Y, g:i a', strtotime($reply['created_at'])); ?></small>
+        
+        <!-- Replies section -->
+        <h3>Replies</h3>
+        
+        <?php
+        // Fetch replies if topic exists
+        $replies = [];
+        try {
+            $stmt = $conn->prepare("
+                SELECT r.reply_id, r.content, r.created_at, r.updated_at, 
+                       u.user_id, u.username
+                FROM forum_replies r
+                LEFT JOIN users u ON r.user_id = u.user_id
+                WHERE r.topic_id = ?
+                ORDER BY r.created_at ASC
+            ");
+            
+            if ($stmt) {
+                $stmt->bind_param("i", $topic_id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                
+                if ($result) {
+                    while ($row = $result->fetch_assoc()) {
+                        $replies[] = $row;
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            echo '<div class="alert alert-danger">Error fetching replies: ' . $e->getMessage() . '</div>';
+        }
+        ?>
+        
+        <?php if (empty($replies)): ?>
+            <div class="alert alert-info">
+                No replies yet. Be the first to reply!
+            </div>
+        <?php else: ?>
+            <?php foreach ($replies as $reply): ?>
+                <div class="card mb-3">
+                    <div class="card-header bg-light">
+                        <div class="d-flex justify-content-between">
+                            <span><?php echo htmlspecialchars($reply['username']); ?></span>
+                            <small><?php echo date('F j, Y, g:i a', strtotime($reply['created_at'])); ?></small>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <?php echo nl2br(htmlspecialchars($reply['content'])); ?>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        <?php endif; ?>
+        
+        <?php if (isset($_SESSION['user_id'])): ?>
+            <!-- Reply form for logged in users -->
+            <div class="card mt-4">
+                <div class="card-header bg-light">
+                    <h4>Post a Reply</h4>
                 </div>
                 <div class="card-body">
-                    <?php echo nl2br(htmlspecialchars($reply['content'])); ?>
+                    <form action="process_reply.php" method="POST">
+                        <input type="hidden" name="topic_id" value="<?php echo $topic_id; ?>">
+                        
+                        <div class="mb-3">
+                            <label for="content" class="form-label">Your Reply</label>
+                            <textarea class="form-control" id="content" name="content" rows="4" required></textarea>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">Post Reply</button>
+                    </form>
                 </div>
             </div>
-        <?php endforeach; ?>
+        <?php else: ?>
+            <div class="alert alert-info mt-4">
+                Please <a href="/auth/login.php">log in</a> to reply to this topic.
+            </div>
+        <?php endif; ?>
     <?php endif; ?>
-    
-    <div class="card mt-4">
-        <div class="card-header bg-light">
-            <h3 class="mb-0 fs-5">Post a Reply</h3>
-        </div>
-        <div class="card-body">
-            <form action="process_reply.php" method="POST" enctype="multipart/form-data">
-                <input type="hidden" name="topic_id" value="<?php echo $topic_id; ?>">
-                
-                <div class="mb-3">
-                    <label for="reply-content" class="form-label">Your Reply</label>
-                    <textarea class="form-control" id="reply-content" name="content" rows="4" required></textarea>
-                </div>
-                
-                <div class="mb-3">
-                    <label for="reply-attachments" class="form-label">Attachments (Optional)</label>
-                    <input type="file" class="form-control" id="reply-attachments" name="attachments[]" multiple>
-                    <div class="form-text">You can upload images, documents or other files (Max 5MB each)</div>
-                </div>
-                
-                <button type="submit" class="btn btn-primary">Post Reply</button>
-            </form>
-        </div>
-    </div>
 </div>
 
 <?php require_once '../includes/footer.php'; ?>
