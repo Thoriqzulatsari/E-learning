@@ -1,18 +1,18 @@
 <?php
-// settings.php
+// settings.php - User account settings management page
 
-// Enable error reporting for debugging (temporary)
+// Enable error reporting for debugging (should be disabled in production)
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Start session management
+// Start session management - ensures user state is maintained across page requests
 session_start();
 
-// Database connection parameters - replace with your actual values
-$db_host = 'localhost'; // Ganti dengan host yang diberikan oleh hosting (cek cPanel atau dokumentasi)
-$db_user = 'u287442801_mini_elearning'; // Ganti dengan nama pengguna MySQL Anda
-$db_pass = 'Jawabarat123_'; // Ganti dengan kata sandi MySQL Anda
-$db_name = 'u287442801_mini_elearning'; // Ganti dengan nama database Anda
+// Database connection parameters - using placeholders for security
+$db_host = 'localhost'; // Database host address - update based on hosting provider
+$db_user = 'u287442801_mini_elearning'; // MySQL username
+$db_pass = 'Jawabarat123_'; // MySQL password - should be in a separate config file in production
+$db_name = 'u287442801_mini_elearning'; // Database name
 
 // Create database connection
 $conn = new mysqli($db_host, $db_user, $db_pass, $db_name);
@@ -22,51 +22,164 @@ if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
 
-// Function to handle database queries safely
+// Function to handle database queries safely with prepared statements
 function safe_query($conn, $sql, $params = [], $types = '', $is_select = true) {
-    if (!$conn) return false;
-    $stmt = $conn->prepare($sql);
-    if ($stmt === false) {
-        error_log("Prepare failed: " . $conn->error);
+    if (!$conn) return false; // Return false if no connection
+    
+    try {
+        $stmt = $conn->prepare($sql); // Prepare the SQL statement
+        if ($stmt === false) {
+            error_log("Prepare failed: " . $conn->error); // Log error if preparation fails
+            return false;
+        }
+        if (!empty($params) && !empty($types)) {
+            $stmt->bind_param($types, ...$params); // Bind parameters with their types
+        }
+        $result = $stmt->execute(); // Execute the prepared statement
+        if ($result === false) {
+            error_log("Execute failed: " . $stmt->error); // Log error if execution fails
+            $stmt->close();
+            return false;
+        }
+        if ($is_select) {
+            $output = $stmt->get_result(); // Get result set for SELECT queries
+        } else {
+            $output = true; // Return true for non-SELECT queries (INSERT, UPDATE, DELETE)
+        }
+        $stmt->close(); // Close the statement
+        return $output;
+    } catch (Exception $e) {
+        error_log("Query error: " . $e->getMessage());
         return false;
     }
-    if (!empty($params) && !empty($types)) {
-        $stmt->bind_param($types, ...$params);
-    }
-    $result = $stmt->execute();
-    if ($result === false) {
-        error_log("Execute failed: " . $stmt->error);
-        $stmt->close();
-        return false;
-    }
-    if ($is_select) {
-        $output = $stmt->get_result();
-    } else {
-        $output = true; // Return true for non-SELECT queries (INSERT, UPDATE, DELETE)
-    }
-    $stmt->close();
-    return $output;
 }
 
-// Check if user is logged in
+// Function to check if a table exists
+function table_exists($conn, $table_name) {
+    $result = $conn->query("SHOW TABLES LIKE '$table_name'");
+    return $result && $result->num_rows > 0;
+}
+
+// Function to check if a column exists in a table
+function column_exists($conn, $table_name, $column_name) {
+    try {
+        $result = $conn->query("SHOW COLUMNS FROM `$table_name` LIKE '$column_name'");
+        return $result && $result->num_rows > 0;
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+// Function to create required tables if they don't exist
+function create_required_tables($conn) {
+    $tables_created = true;
+    
+    // Check if users table exists and has required columns
+    if (table_exists($conn, 'users')) {
+        // Check if bio column exists in users table
+        if (!column_exists($conn, 'users', 'bio')) {
+            try {
+                $sql = "ALTER TABLE users ADD COLUMN bio TEXT";
+                if (!$conn->query($sql)) {
+                    error_log("Error adding bio column to users table: " . $conn->error);
+                }
+            } catch (Exception $e) {
+                error_log("Error adding bio column: " . $e->getMessage());
+            }
+        }
+    }
+    
+    // Create user_preferences table if it doesn't exist
+    if (!table_exists($conn, 'user_preferences')) {
+        try {
+            $sql = "CREATE TABLE user_preferences (
+                preference_id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                email_notifications TINYINT(1) DEFAULT 1,
+                course_updates TINYINT(1) DEFAULT 1,
+                assignment_reminders TINYINT(1) DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY (user_id)
+            )";
+            
+            if (!$conn->query($sql)) {
+                error_log("Error creating user_preferences table: " . $conn->error);
+                $tables_created = false;
+            }
+        } catch (Exception $e) {
+            error_log("Error creating user_preferences table: " . $e->getMessage());
+            $tables_created = false;
+        }
+    }
+    
+    // Create instructor_details table if it doesn't exist
+    if (!table_exists($conn, 'instructor_details')) {
+        try {
+            $sql = "CREATE TABLE instructor_details (
+                instructor_id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                specialization VARCHAR(255),
+                teaching_experience TEXT,
+                credentials TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY (user_id)
+            )";
+            
+            if (!$conn->query($sql)) {
+                error_log("Error creating instructor_details table: " . $conn->error);
+                $tables_created = false;
+            }
+        } catch (Exception $e) {
+            error_log("Error creating instructor_details table: " . $e->getMessage());
+            $tables_created = false;
+        }
+    }
+    
+    return $tables_created;
+}
+
+// Try to create required tables - ignore errors if they occur
+try {
+    create_required_tables($conn);
+} catch (Exception $e) {
+    error_log("Error in table creation: " . $e->getMessage());
+}
+
+// Check if user is logged in - redirect to login if not
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
 // User data initialization with default values
-$user_id = $_SESSION['user_id'];
-$user_role = $_SESSION['user_role'] ?? 'student'; // Default to 'student' if not set
+$user_id = $_SESSION['user_id']; // Get user ID from session
+$user_role = $_SESSION['user_role'] ?? 'student'; // Get user role or default to 'student'
 
-// Initialize messages and data
+// Initialize messages and data containers
 $success_message = '';
 $error_message = '';
-$user = ['first_name' => '', 'last_name' => '', 'email' => '', 'bio' => ''];
-$preferences = ['email_notifications' => 1, 'course_updates' => 1, 'assignment_reminders' => 1];
-$instructor_data = ['specialization' => '', 'teaching_experience' => '', 'credentials' => ''];
+$user = [
+    'first_name' => '', 
+    'last_name' => '', 
+    'email' => '', 
+    'bio' => ''
+];
+$preferences = [
+    'email_notifications' => 1, 
+    'course_updates' => 1, 
+    'assignment_reminders' => 1
+];
+$instructor_data = [
+    'specialization' => '', 
+    'teaching_experience' => '', 
+    'credentials' => ''
+];
 
-// Process form submissions
+// Process different form submissions based on the form type
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Process profile update form
     if (isset($_POST['update_profile'])) {
         $first_name = trim($_POST['first_name'] ?? '');
         $last_name = trim($_POST['last_name'] ?? '');
@@ -74,91 +187,208 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $bio = trim($_POST['bio'] ?? '');
 
         if ($conn) {
-            $result = safe_query($conn, "UPDATE users SET first_name = ?, last_name = ?, email = ?, bio = ? WHERE user_id = ?", 
-                [$first_name, $last_name, $email, $bio, $user_id], "ssssi", false); // Non-SELECT query
-            if ($result !== false) {
-                $success_message = "Profile updated successfully!";
-                $user = array_merge($user, ['first_name' => $first_name, 'last_name' => $last_name, 'email' => $email, 'bio' => $bio]);
-            } else {
-                $error_message = "Error updating profile.";
+            try {
+                // Update user profile in the database
+                $result = safe_query($conn, "UPDATE users SET first_name = ?, last_name = ?, email = ?, bio = ? WHERE user_id = ?", 
+                    [$first_name, $last_name, $email, $bio, $user_id], "ssssi", false);
+                    
+                if ($result !== false) {
+                    $success_message = "Profile updated successfully!";
+                    $user = [
+                        'first_name' => $first_name, 
+                        'last_name' => $last_name, 
+                        'email' => $email, 
+                        'bio' => $bio
+                    ];
+                } else {
+                    $error_message = "Error updating profile.";
+                }
+            } catch (Exception $e) {
+                $error_message = "Error updating profile: " . $e->getMessage();
             }
         }
+    // Process password change form
     } elseif (isset($_POST['change_password'])) {
         $current_password = $_POST['current_password'] ?? '';
         $new_password = $_POST['new_password'] ?? '';
         $confirm_password = $_POST['confirm_password'] ?? '';
 
+        // Validate password match
         if ($new_password !== $confirm_password) {
             $error_message = "New passwords do not match.";
         } else {
-            $success_message = "Password changed successfully!"; // In production, verify and update in database
+            try {
+                // First, get the current hashed password
+                $password_query = safe_query($conn, "SELECT password FROM users WHERE user_id = ?", [$user_id], "i", true);
+                if ($password_query && $password_query->num_rows > 0) {
+                    $user_data = $password_query->fetch_assoc();
+                    
+                    // Check if password column has data
+                    if (isset($user_data['password']) && !empty($user_data['password'])) {
+                        // Verify current password if hashed
+                        if (password_verify($current_password, $user_data['password'])) {
+                            // Hash the new password
+                            $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+                            // Update the password
+                            $update_result = safe_query($conn, "UPDATE users SET password = ? WHERE user_id = ?", 
+                                [$hashed_password, $user_id], "si", false);
+                            if ($update_result !== false) {
+                                $success_message = "Password changed successfully!";
+                            } else {
+                                $error_message = "Error updating password.";
+                            }
+                        } else {
+                            $error_message = "Current password is incorrect.";
+                        }
+                    } else {
+                        // If password is not hashed (or empty), just update with new password
+                        $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+                        $update_result = safe_query($conn, "UPDATE users SET password = ? WHERE user_id = ?", 
+                            [$hashed_password, $user_id], "si", false);
+                        if ($update_result !== false) {
+                            $success_message = "Password set successfully!";
+                        } else {
+                            $error_message = "Error setting password.";
+                        }
+                    }
+                } else {
+                    $error_message = "Error retrieving user data.";
+                }
+            } catch (Exception $e) {
+                // If password column does not exist or another error occurs
+                $error_message = "Password update failed: " . $e->getMessage();
+            }
         }
+    // Process notification settings form
     } elseif (isset($_POST['notification_settings'])) {
         $email_notifications = isset($_POST['email_notifications']) ? 1 : 0;
         $course_updates = isset($_POST['course_updates']) ? 1 : 0;
         $assignment_reminders = isset($_POST['assignment_reminders']) ? 1 : 0;
 
-        if ($conn) {
-            $check = safe_query($conn, "SELECT * FROM user_preferences WHERE user_id = ?", [$user_id], "i", true);
-            if ($check && $check->num_rows > 0) {
-                $result = safe_query($conn, "UPDATE user_preferences SET email_notifications = ?, course_updates = ?, assignment_reminders = ? WHERE user_id = ?", 
-                    [$email_notifications, $course_updates, $assignment_reminders, $user_id], "iiii", false);
-            } else {
-                $result = safe_query($conn, "INSERT INTO user_preferences (user_id, email_notifications, course_updates, assignment_reminders) VALUES (?, ?, ?, ?)", 
-                    [$user_id, $email_notifications, $course_updates, $assignment_reminders], "iiii", false);
+        if ($conn && table_exists($conn, 'user_preferences')) {
+            try {
+                // Check if user preferences already exist
+                $check = safe_query($conn, "SELECT * FROM user_preferences WHERE user_id = ?", [$user_id], "i", true);
+                if ($check && $check->num_rows > 0) {
+                    // Update existing preferences
+                    $result = safe_query($conn, "UPDATE user_preferences SET email_notifications = ?, course_updates = ?, assignment_reminders = ? WHERE user_id = ?", 
+                        [$email_notifications, $course_updates, $assignment_reminders, $user_id], "iiii", false);
+                } else {
+                    // Insert new preferences
+                    $result = safe_query($conn, "INSERT INTO user_preferences (user_id, email_notifications, course_updates, assignment_reminders) VALUES (?, ?, ?, ?)", 
+                        [$user_id, $email_notifications, $course_updates, $assignment_reminders], "iiii", false);
+                }
+                if ($result !== false) {
+                    $success_message = "Notification settings updated successfully!";
+                    $preferences = [
+                        'email_notifications' => $email_notifications, 
+                        'course_updates' => $course_updates, 
+                        'assignment_reminders' => $assignment_reminders
+                    ];
+                } else {
+                    $error_message = "Error updating notification settings.";
+                }
+            } catch (Exception $e) {
+                $error_message = "Error updating preferences: " . $e->getMessage();
             }
-            if ($result !== false) {
-                $success_message = "Notification settings updated successfully!";
-                $preferences = ['email_notifications' => $email_notifications, 'course_updates' => $course_updates, 'assignment_reminders' => $assignment_reminders];
-            } else {
-                $error_message = "Error updating notification settings.";
-            }
+        } else {
+            $error_message = "Notification settings could not be saved. Please try again later.";
         }
+    // Process instructor profile update form (only for instructors)
     } elseif ($user_role === 'instructor' && isset($_POST['update_instructor_profile'])) {
         $specialization = trim($_POST['specialization'] ?? '');
         $teaching_experience = trim($_POST['teaching_experience'] ?? '');
         $credentials = trim($_POST['credentials'] ?? '');
 
-        if ($conn) {
-            $check = safe_query($conn, "SELECT * FROM instructor_details WHERE user_id = ?", [$user_id], "i", true);
-            if ($check && $check->num_rows > 0) {
-                $result = safe_query($conn, "UPDATE instructor_details SET specialization = ?, teaching_experience = ?, credentials = ? WHERE user_id = ?", 
-                    [$specialization, $teaching_experience, $credentials, $user_id], "sssi", false);
-            } else {
-                $result = safe_query($conn, "INSERT INTO instructor_details (user_id, specialization, teaching_experience, credentials) VALUES (?, ?, ?, ?)", 
-                    [$user_id, $specialization, $teaching_experience, $credentials], "isss", false);
+        if ($conn && table_exists($conn, 'instructor_details')) {
+            try {
+                // Check if instructor details already exist
+                $check = safe_query($conn, "SELECT * FROM instructor_details WHERE user_id = ?", [$user_id], "i", true);
+                if ($check && $check->num_rows > 0) {
+                    // Update existing instructor details
+                    $result = safe_query($conn, "UPDATE instructor_details SET specialization = ?, teaching_experience = ?, credentials = ? WHERE user_id = ?", 
+                        [$specialization, $teaching_experience, $credentials, $user_id], "sssi", false);
+                } else {
+                    // Insert new instructor details
+                    $result = safe_query($conn, "INSERT INTO instructor_details (user_id, specialization, teaching_experience, credentials) VALUES (?, ?, ?, ?)", 
+                        [$user_id, $specialization, $teaching_experience, $credentials], "isss", false);
+                }
+                if ($result !== false) {
+                    $success_message = "Instructor profile updated successfully!";
+                    $instructor_data = [
+                        'specialization' => $specialization, 
+                        'teaching_experience' => $teaching_experience, 
+                        'credentials' => $credentials
+                    ];
+                } else {
+                    $error_message = "Error updating instructor profile.";
+                }
+            } catch (Exception $e) {
+                $error_message = "Error updating instructor profile: " . $e->getMessage();
             }
-            if ($result !== false) {
-                $success_message = "Instructor profile updated successfully!";
-                $instructor_data = ['specialization' => $specialization, 'teaching_experience' => $teaching_experience, 'credentials' => $credentials];
-            } else {
-                $error_message = "Error updating instructor profile.";
-            }
+        } else {
+            $error_message = "Instructor settings could not be saved. Please try again later.";
         }
     }
 }
 
-// Fetch current data if connection exists
+// Fetch current user data if connection exists
 if ($conn) {
-    $result = safe_query($conn, "SELECT * FROM users WHERE user_id = ?", [$user_id], "i", true);
-    if ($result && $result->num_rows > 0) {
-        $user = $result->fetch_assoc();
-    }
-
-    $result = safe_query($conn, "SELECT * FROM user_preferences WHERE user_id = ?", [$user_id], "i", true);
-    if ($result && $result->num_rows > 0) {
-        $preferences = $result->fetch_assoc();
-    }
-
-    if ($user_role === 'instructor') {
-        $result = safe_query($conn, "SELECT * FROM instructor_details WHERE user_id = ?", [$user_id], "i", true);
+    // Get user's basic information
+    try {
+        $result = safe_query($conn, "SELECT * FROM users WHERE user_id = ?", [$user_id], "i", true);
         if ($result && $result->num_rows > 0) {
-            $instructor_data = $result->fetch_assoc();
+            $fetched_user = $result->fetch_assoc();
+            // Ensure all user fields are set, use defaults for missing values
+            $user = [
+                'first_name' => isset($fetched_user['first_name']) ? $fetched_user['first_name'] : '',
+                'last_name' => isset($fetched_user['last_name']) ? $fetched_user['last_name'] : '',
+                'email' => isset($fetched_user['email']) ? $fetched_user['email'] : '',
+                'bio' => isset($fetched_user['bio']) ? $fetched_user['bio'] : ''
+            ];
+        }
+    } catch (Exception $e) {
+        error_log("Error fetching user data: " . $e->getMessage());
+    }
+
+    // Get user's notification preferences
+    if (table_exists($conn, 'user_preferences')) {
+        try {
+            $result = safe_query($conn, "SELECT * FROM user_preferences WHERE user_id = ?", [$user_id], "i", true);
+            if ($result && $result->num_rows > 0) {
+                $fetched_preferences = $result->fetch_assoc();
+                // Ensure all preference fields are set, use defaults for missing values
+                $preferences = [
+                    'email_notifications' => isset($fetched_preferences['email_notifications']) ? $fetched_preferences['email_notifications'] : 1,
+                    'course_updates' => isset($fetched_preferences['course_updates']) ? $fetched_preferences['course_updates'] : 1,
+                    'assignment_reminders' => isset($fetched_preferences['assignment_reminders']) ? $fetched_preferences['assignment_reminders'] : 1
+                ];
+            }
+        } catch (Exception $e) {
+            error_log("Error fetching user preferences: " . $e->getMessage());
+        }
+    }
+
+    // Get instructor-specific data if user is an instructor
+    if ($user_role === 'instructor' && table_exists($conn, 'instructor_details')) {
+        try {
+            $result = safe_query($conn, "SELECT * FROM instructor_details WHERE user_id = ?", [$user_id], "i", true);
+            if ($result && $result->num_rows > 0) {
+                $fetched_instructor_data = $result->fetch_assoc();
+                // Ensure all instructor fields are set, use defaults for missing values
+                $instructor_data = [
+                    'specialization' => isset($fetched_instructor_data['specialization']) ? $fetched_instructor_data['specialization'] : '',
+                    'teaching_experience' => isset($fetched_instructor_data['teaching_experience']) ? $fetched_instructor_data['teaching_experience'] : '',
+                    'credentials' => isset($fetched_instructor_data['credentials']) ? $fetched_instructor_data['credentials'] : ''
+                ];
+            }
+        } catch (Exception $e) {
+            error_log("Error fetching instructor data: " . $e->getMessage());
         }
     }
 }
 
-// Helper function for safe HTML output
+// Helper function for safe HTML output to prevent XSS attacks
 function escape($value) {
     return htmlspecialchars($value ?? '', ENT_QUOTES, 'UTF-8');
 }
@@ -171,10 +401,10 @@ function escape($value) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Account Settings - Mini E-Learning</title>
     
-    <!-- Bootstrap CSS -->
+    <!-- Bootstrap CSS for styling and layout -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     
-    <!-- Font Awesome -->
+    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
     <style>
@@ -265,13 +495,14 @@ function escape($value) {
 </head>
 <body>
     <div class="container">
+        <!-- Header section with user info -->
         <div class="row mb-4">
             <div class="col-12">
                 <h1 class="text-center mb-3">Mini E-Learning</h1>
                 <div class="user-info">
                     <div class="row align-items-center">
                         <div class="col-md-6">
-                            <h4>Welcome, <?php echo escape($user['first_name'] . ' ' . $user['last_name'] ?: 'Guest'); ?></h4>
+                            <h4>Welcome, <?php echo (trim($user['first_name'] . ' ' . $user['last_name']) != '') ? escape(trim($user['first_name'] . ' ' . $user['last_name'])) : 'User'; ?></h4>
                             <p><strong>Role:</strong> <?php echo ucfirst($user_role ?? 'Student'); ?></p>
                         </div>
                         <div class="col-md-6 text-md-end mt-3 mt-md-0">
@@ -285,12 +516,14 @@ function escape($value) {
         
         <h2 class="mb-4"><i class="fas fa-cog"></i> Account Settings</h2>
         
+        <!-- Success message display -->
         <?php if ($success_message): ?>
             <div class="alert alert-success d-flex align-items-center" role="alert">
                 <i class="fas fa-check-circle me-2"></i> <?php echo $success_message; ?>
             </div>
         <?php endif; ?>
         
+        <!-- Error message display -->
         <?php if ($error_message): ?>
             <div class="alert alert-danger d-flex align-items-center" role="alert">
                 <i class="fas fa-exclamation-circle me-2"></i> <?php echo $error_message; ?>
@@ -298,6 +531,7 @@ function escape($value) {
         <?php endif; ?>
         
         <div class="row">
+            <!-- Left sidebar with navigation tabs -->
             <div class="col-md-3 mb-4">
                 <div class="list-group">
                     <a href="#profile" class="list-group-item list-group-item-action active" data-bs-toggle="list">
@@ -317,6 +551,7 @@ function escape($value) {
                 </div>
             </div>
             
+            <!-- Main content area with tab panels -->
             <div class="col-md-9">
                 <div class="tab-content">
                     <!-- Profile Settings Tab -->
@@ -353,7 +588,7 @@ function escape($value) {
                         </div>
                     </div>
                     
-                    <!-- Security Tab -->
+                    <!-- Security Tab (Password Change) -->
                     <div class="tab-pane fade" id="security">
                         <div class="card">
                             <div class="card-header">
@@ -420,7 +655,7 @@ function escape($value) {
                         </div>
                     </div>
                     
-                    <!-- Instructor Settings Tab -->
+                    <!-- Instructor Settings Tab (only visible for instructors) -->
                     <?php if ($user_role === 'instructor'): ?>
                     <div class="tab-pane fade" id="instructor">
                         <div class="card">
@@ -455,11 +690,11 @@ function escape($value) {
         </div>
     </div>
 
-    <!-- Bootstrap JS and dependencies -->
+    <!-- Bootstrap JS and dependencies for interactive elements -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
-        // JavaScript for tab navigation
+        // JavaScript for tab navigation functionality
         document.addEventListener('DOMContentLoaded', function() {
             const tabs = document.querySelectorAll('.list-group-item');
             tabs.forEach(tab => {
